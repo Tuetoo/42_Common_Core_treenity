@@ -1,8 +1,20 @@
 #include "Topic.hpp"
+#include "ipc_protocol.h"
 
 #include <utility>
+#include <cstring>
+#include <cerrno>
+#include <fcntl.h>
+#include <iostream>
+#include <mqueue.h>
 
 namespace treenity {
+
+namespace {
+bool key_matches(const std::string& prefix, const std::string& key) {
+    return prefix.empty() || key.compare(0, prefix.size(), prefix) == 0;
+}
+}
 
 Topic::Topic(std::string name) : name_(std::move(name)) {}
 
@@ -32,12 +44,36 @@ void Topic::stop() {
         worker_.join();
 }
 
-void Topic::enqueue_record(std::string key, std::string value) {
+void Topic::push_work(TopicWorkItem item) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
-        work_queue_.push(TopicWorkItem{std::move(key), std::move(value)});
+        work_queue_.push(std::move(item));
     }
     queue_cv_.notify_one();
+}
+
+void Topic::enqueue_record(std::string key, std::string value) {
+    TopicWorkItem item;
+    item.kind = TopicWorkItem::Kind::PRODUCE;
+    item.key = std::move(key);
+    item.value = std::move(value);
+    push_work(std::move(item));
+}
+
+void Topic::add_consumer(const std::string& client_id, const std::string& prefix,
+                            const std::string& ipc_path, uint32_t start_offset) {
+    TopicWorkItem item;
+    item.kind = TopicWorkItem::Kind::ADD_CONSUMER;
+    item.consumer = ConsumerHandle{client_id, prefix, ipc_path};
+    item.start_offset = start_offset;
+    push_work(std::move(item));
+}
+
+void Topic::remove_consumer(const std::string& client_id) {
+    TopicWorkItem item;
+    item.kind = TopicWorkItem::Kind::REMOVE_CONSUMER;
+    item.consumer = ConsumerHandle{client_id, "", ""};
+    push_work(std::move(item));
 }
 
 void Topic::worker_loop() {
@@ -49,7 +85,76 @@ void Topic::worker_loop() {
         TopicWorkItem item = std::move(work_queue_.front());
         work_queue_.pop();
         lock.unlock();
-        append(std::move(item.key), std::move(item.value));
+
+        switch (item.kind) {
+            case TopicWorkItem::Kind::PRODUCE:
+                handle_produced_record(item.key, item.value);
+                break;
+            case TopicWorkItem::Kind::ADD_CONSUMER:
+                handle_add_consumer(item.consumer, item.start_offset);
+                break;
+            case TopicWorkItem::Kind::REMOVE_CONSUMER:
+                consumers_.remove(item.consumer.client_id);
+                break;
+        }
+    }
+    send_shutdown_to_all_consumers();
+}
+
+void Topic::handle_produced_record(const std::string& key, const std::string& value) {
+    uint32_t offset = append(key, value);
+    StoredMessage msg{offset, key, value};
+    for (const auto& consumer : consumers_.match(key))
+        deliver_to(consumer, msg);
+}
+
+void Topic::handle_add_consumer(const ConsumerHandle& consumer, uint32_t start_offset) {
+    uint32_t end = size();
+    for (uint32_t off = start_offset; off < end; ++off) {
+        std::optional<StoredMessage> msg = get(off);
+        if (msg && key_matches(consumer.prefix, msg->key))
+            deliver_to(consumer, *msg);
+    }
+    consumers_.add(consumer);
+}
+
+void Topic::deliver_to(const ConsumerHandle& consumer, const StoredMessage& msg) const {
+    if (msg.key.size() + msg.value.size() > MAX_KV_LEN) {
+        std::cerr << "[topic " << name_ << "] message at offset " << msg.offset
+                  << " is too large to deliver, skipping\n";
+        return;
+    }
+    mqd_t mq = mq_open(consumer.ipc_path.c_str(), O_WRONLY | O_NONBLOCK);
+    if (mq == static_cast<mqd_t>(-1)) {
+        std::cerr << "[topic " << name_ << "] consumer " << consumer.client_id
+                  << " unreachable (" << std::strerror(errno) << "), dropping this delivery\n";
+        return;
+    }
+    ServerToClientMessage out{};
+    out.type = MessageType::CONSUMER_MESSAGE;
+    out.consumer_msg.type = MessageType::CONSUMER_MESSAGE;
+    out.consumer_msg.offset = msg.offset;
+    out.consumer_msg.key_size = static_cast<uint32_t>(msg.key.size());
+    out.consumer_msg.value_size = static_cast<uint32_t>(msg.value.size());
+    std::memcpy(out.consumer_msg.data, msg.key.data(), msg.key.size());
+    std::memcpy(out.consumer_msg.data + msg.key.size(), msg.value.data(), msg.value.size());
+    if (mq_send(mq, reinterpret_cast<const char*>(&out), sizeof(out), 0) == -1) {
+        std::cerr << "[topic " << name_ << "] mq_send to " <<consumer.client_id
+                  << " failed: " << std::strerror(errno) << "\n";
+    }
+    mq_close(mq);
+}
+
+void Topic::send_shutdown_to_all_consumers() {
+    ServerToClientMessage out{};
+    out.type = MessageType::SHUTDOWN;
+    out.consumer_msg.type = MessageType::SHUTDOWN;
+    for (const auto& consumer : consumers_.all()) {
+        mqd_t mq = mq_open(consumer.ipc_path.c_str(), O_WRONLY | O_NONBLOCK);
+        if (mq == static_cast<mqd_t>(-1))
+            continue;
+        mq_send(mq, reinterpret_cast<const char*>(&out), sizeof(out), 0);
+        mq_close(mq);
     }
 }
 
@@ -76,3 +181,4 @@ uint32_t Topic::size() const {
     return static_cast<uint32_t>(log_.size());
 }
 }
+
