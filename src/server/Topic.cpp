@@ -1,22 +1,24 @@
 #include "Topic.hpp"
-#include "ipc_protocol.h"
 
 #include <utility>
 #include <cstring>
 #include <cerrno>
 #include <fcntl.h>
 #include <iostream>
-#include <mqueue.h>
+#include <stdexcept>
 
 namespace treenity {
 
 namespace {
+constexpr uint32_t POISON_PILL_KEY_SIZE = 0xFFFFFFFF;
+
 bool key_matches(const std::string& prefix, const std::string& key) {
     return prefix.empty() || key.compare(0, prefix.size(), prefix) == 0;
 }
 }
 
-Topic::Topic(std::string name) : name_(std::move(name)) {}
+Topic::Topic(std::string name, pid_t server_pid) 
+    : name_(std::move(name)), server_pid_(server_pid) {}
 
 Topic::~Topic() {
     stop();
@@ -27,8 +29,22 @@ void Topic::start() {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         if (running_)
             return;
+        data_queue_name_ = topic_data_queue_name(server_pid_, name_);
+
+        struct mq_attr attr {} ;
+        attr.mq_flags = 0;
+        attr.mq_maxmsg = QUEUE_MAX_MSG_COUNT;
+        attr.mq_msgsize = PRODUCE_QUEUE_MAX_MSG_SIZE;
+        attr.mq_curmsgs = 0;
+
+        mq_unlink(data_queue_name_.c_str());
+        data_mq_ = mq_open(data_queue_name_.c_str(), O_CREAT | O_RDONLY, 0600, &attr);
+        if (data_mq_ == static_cast<mqd_t>(-1)) {
+            throw std::runtime_error("Topic '" + name_ + "': mq_open(" + data_queue_name_ + ") failed: " + std::strerror(errno));
+        }
         running_ = true;
     }
+    reader_ = std::thread(&Topic::reader_loop, this);
     worker_ = std::thread(&Topic::worker_loop, this);
 }
 
@@ -37,11 +53,29 @@ void Topic::stop() {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         if (!running_)
             return;
+    }
+    mqd_t self = mq_open(data_queue_name_.c_str(), O_WRONLY);
+    if (self != static_cast<mqd_t>(-1)) {
+        ProduceRecord pill{};
+        pill.key_size = POISON_PILL_KEY_SIZE;
+        mq_send(self, reinterpret_cast<const char*>(&pill), sizeof(pill), 0);
+        mq_close(self);
+    } else {
+        std::cerr << "[topic " << name_ << "] could not open own data queue to send the "
+                  << "shutdown poison pill (" << std::strerror(errno) << ")\n";
+    }
+    if (reader_.joinable())
+        reader_.join();
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
         running_ = false;
     }
     queue_cv_.notify_all();
     if (worker_.joinable())
         worker_.join();
+    mq_close(data_mq_);
+    mq_unlink(data_queue_name_.c_str());
+    data_mq_ = static_cast<mqd_t>(-1);
 }
 
 void Topic::push_work(TopicWorkItem item) {
@@ -74,6 +108,29 @@ void Topic::remove_consumer(const std::string& client_id) {
     item.kind = TopicWorkItem::Kind::REMOVE_CONSUMER;
     item.consumer = ConsumerHandle{client_id, "", ""};
     push_work(std::move(item));
+}
+
+void Topic::reader_loop() {
+    while (true) {
+        char buf[PRODUCE_QUEUE_MAX_MSG_SIZE];
+        ssize_t n = mq_receive(data_mq_, buf, sizeof(buf), nullptr);
+        if (n<0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+
+        ProduceRecord rec;
+        std::memcpy(&rec, buf, sizeof(rec));
+        if (rec.key_size == POISON_PILL_KEY_SIZE)
+            break;
+        if (static_cast<std::size_t>(rec.key_size) + rec.value_size > MAX_KV_LEN) {
+            std::cerr << "[topic " << name_ << "] malformed record (sizes exceed "
+                      << MAX_KV_LEN << "), skipping\n";
+            continue;
+        }
+        enqueue_record(std::string(rec.data, rec.key_size), std::string(rec.data + rec.key_size, rec.value_size));
+    }
 }
 
 void Topic::worker_loop() {
@@ -160,6 +217,10 @@ void Topic::send_shutdown_to_all_consumers() {
 
 const std::string& Topic::name() const {
     return name_;
+}
+
+const std::string& Topic::data_queue_name() const {
+    return data_queue_name_;
 }
 
 uint32_t Topic::append(std::string key, std::string value) {

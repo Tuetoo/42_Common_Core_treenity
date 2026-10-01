@@ -2,6 +2,7 @@
 #define TREENITY_TOPIC_HPP
 
 #include "PrefixIndex.hpp"
+#include "ipc_protocol.h"
 
 #include <cstdint>
 #include <optional>
@@ -12,6 +13,8 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <mqueue.h>
+#include <sys/types.h>
 
 namespace treenity {
 struct StoredMessage {
@@ -31,7 +34,7 @@ struct TopicWorkItem {
 
 class Topic {
 public:
-    explicit Topic(std::string name);
+    Topic(std::string name, pid_t server_pid);
     ~Topic();
 
     Topic(const Topic&) = delete;
@@ -45,11 +48,13 @@ public:
     void remove_consumer(const std::string& client_id);
 
     const std::string& name() const;
+    const std::string& data_queue_name() const;
     uint32_t append(std::string key, std::string value);
     std::optional<StoredMessage> get(uint32_t offset) const;
     uint32_t size() const;
 
 private:
+    void reader_loop();
     void worker_loop();
     void handle_produced_record(const std::string& key, const std::string& value);
     void handle_add_consumer(const ConsumerHandle& consumer, uint32_t start_offset);
@@ -58,6 +63,9 @@ private:
     void push_work(TopicWorkItem item);
 
     std::string                 name_;
+    pid_t                       server_pid_;
+    std::string                 data_queue_name_;
+    mqd_t                       data_mq_ = static_cast<mqd_t>(-1);
     mutable std::shared_mutex   log_mutex_;
     std::vector<StoredMessage>  log_;
     PrefixIndex                 consumers_;
@@ -65,6 +73,7 @@ private:
     std::mutex                  queue_mutex_;
     std::condition_variable     queue_cv_;
     bool                        running_ = false;
+    std::thread                 reader_;
     std::thread                 worker_;
 };
 }
