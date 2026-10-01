@@ -6,11 +6,20 @@
 #include <fcntl.h>
 #include <iostream>
 #include <stdexcept>
+#include <csignal>
 
 namespace treenity {
 
 namespace {
 constexpr uint32_t POISON_PILL_KEY_SIZE = 0xFFFFFFFF;
+
+void block_shutdown_signals_on_this_thread() {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &set, nullptr);
+}
 
 bool key_matches(const std::string& prefix, const std::string& key) {
     return prefix.empty() || key.compare(0, prefix.size(), prefix) == 0;
@@ -111,6 +120,7 @@ void Topic::remove_consumer(const std::string& client_id) {
 }
 
 void Topic::reader_loop() {
+    block_shutdown_signals_on_this_thread();
     while (true) {
         char buf[PRODUCE_QUEUE_MAX_MSG_SIZE];
         ssize_t n = mq_receive(data_mq_, buf, sizeof(buf), nullptr);
@@ -134,6 +144,7 @@ void Topic::reader_loop() {
 }
 
 void Topic::worker_loop() {
+    block_shutdown_signals_on_this_thread();
     while (true) {
         std::unique_lock<std::mutex> lock(queue_mutex_);
         queue_cv_.wait(lock, [this] { return !work_queue_.empty() || !running_; });
