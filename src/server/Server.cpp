@@ -6,8 +6,14 @@
 #include <iostream>
 #include <stdexcept>
 #include <unistd.h>
+#include <cctype>
 
 namespace treenity {
+namespace {
+std::string field_to_string(const char* field, std::size_t capacity) {
+    return std::string(field, strnlen(field, capacity));
+}
+}
 
 Server::Server()
     : pid_(getpid()), main_queue_name_(main_queue_name(pid_)) {
@@ -32,5 +38,113 @@ Server::~Server() {
 
 void Server::run() {
     std::cout << main_queue_name_ << std::endl;
+
+    while (true) {
+        char buf[MAIN_QUEUE_MAX_MSG_SIZE];
+        ssize_t n = mq_receive(main_mq_, buf, sizeof(buf), nullptr);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            std::cerr << "server: mq_receive failed: " << std::strerror(errno) << "\n";
+            break;
+        }
+        IpcRequest req;
+        std::memcpy(&req, buf, sizeof(req));
+        if (!is_valid_id(field_to_string(req.client_id, sizeof(req.client_id)))) {
+            std::cerr << "server: dropping request with an invalid client id\n";
+            continue;
+        }
+        switch (req.type) {
+            case MessageType::CREATE_TOPIC:     handle_create_topic(req); break;
+            case MessageType::LIST_TOPICS:      handle_list_topics(req); break;
+            case MessageType::REGISTER_CLIENT:  handle_register_client(req); break;
+            case MessageType::PRODUCE_START:    handle_produce_start(req); break;
+            case MessageType::INFO:             handle_info(req); break;
+            case MessageType::CONSUMER_ACK:     handle_consumer_ack(req); break;
+            case MessageType::DISCONNECT:       handle_disconnect(req); break;
+            default:
+                std::cerr << "server: ignoring unexpected message type "
+                          << static_cast<int>(req.type) << " on the main queue\n";
+        }
+    }
+}
+
+bool Server::is_valid_id(const std::string& id) {
+    if (id.empty() || id.size() > MAX_ID_LEN)
+        return false;
+    for (unsigned char c : id) {
+        if (!std::isalnum(c) && c != '_' && c != '.' && c != '-')
+            return false;
+    }
+    return true;
+}
+
+ServerToClientMessage Server::make_ok(uint64_t request_id) {
+    ServerToClientMessage msg{};
+    msg.type = MessageType::RESPONSE_OK;
+    msg.response.type = MessageType::RESPONSE_OK;
+    msg.response.request_id = request_id;
+    msg.response.error_code = ErrorCode::NONE;
+    return msg;
+}
+
+ServerToClientMessage Server::make_error(uint64_t request_id, ErrorCode code, const std::string& message) {
+    ServerToClientMessage msg{};
+    msg.type = MessageType::RESPONSE_ERROR;
+    msg.response.type = MessageType::RESPONSE_ERROR;
+    msg.response.request_id = request_id;
+    msg.response.error_code = code;
+    std::strncpy(msg.response.error_message, message.c_str(), MAX_ERROR_MSG_LEN - 1);
+    return msg;
+}
+
+void Server::reply(const std::string& client_id, const ServerToClientMessage& msg) const {
+    std::string path = client_queue_name(pid_, client_id);
+    mqd_t mq = mq_open(path.c_str(), O_WRONLY | O_NONBLOCK);
+    if (mq == static_cast<mqd_t>(-1)) {
+        std::cerr << "server: client '" << client_id << "' unreachable ("
+                  << std::strerror(errno) << ")\n";
+        return;
+    }
+    if (mq_send(mq, reinterpret_cast<const char*>(&msg), sizeof(msg), 0) == -1) {
+        std::cerr << "server: mq_send to '" << client_id << "' failed: "
+                  << std::strerror(errno) << "\n";
+    }
+    mq_close(mq);
+}
+
+void Server::handle_create_topic(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+}
+
+void Server::handle_list_topics(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+}
+
+void Server::handle_register_client(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+}
+
+void Server::handle_produce_start(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+}
+
+void Server::handle_info(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+}
+
+void Server::handle_consumer_ack(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+}
+
+void Server::handle_disconnect(const IpcRequest& req) {
+    reply(field_to_string(req.client_id, sizeof(req.client_id)),
+          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
 }
 }
