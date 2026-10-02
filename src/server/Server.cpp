@@ -204,8 +204,22 @@ void Server::handle_register_client(const IpcRequest& req) {
 }
 
 void Server::handle_produce_start(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+    std::string topic_name = field_to_string(req.topic_name, sizeof(req.topic_name));
+    if (!is_valid_id(topic_name)) {
+        reply(client_id, make_error(req.request_id, ErrorCode::GENERAL, "invalid topic name"));
+        return;
+    }
+    auto topic_it = topics_.find(topic_name);
+    if (topic_it == topics_.end()) {
+        reply(client_id, make_error(req.request_id, ErrorCode::TOPIC_ERROR, "topic not found"));
+        return;
+    }
+
+    ServerToClientMessage ok = make_ok(req.request_id);
+    std::strncpy(ok.response.topic_name, topic_name.c_str(), MAX_ID_LEN);
+    std::strncpy(ok.response.ipc_path, topic_it->second->data_queue_name().c_str(), MAX_IPC_PATH_LEN - 1);
+    reply(client_id, ok);
 }
 
 void Server::handle_info(const IpcRequest& req) {
