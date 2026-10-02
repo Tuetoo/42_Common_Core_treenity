@@ -114,13 +114,44 @@ void Server::reply(const std::string& client_id, const ServerToClientMessage& ms
 }
 
 void Server::handle_create_topic(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+    std::string topic_name = field_to_string(req.topic_name, sizeof(req.topic_name));
+    if (!is_valid_id(topic_name)) {
+        reply(client_id, make_error(req.request_id, ErrorCode::GENERAL, "invalid topic name"));
+        return;
+    }
+    if (topics_.count(topic_name)) {
+        reply(client_id, make_error(req.request_id, ErrorCode::TOPIC_ERROR, "topic already exists"));
+        return;
+    }
+    auto topic = std::make_unique<Topic>(topic_name, pid_);
+    try {
+        topic->start();
+    } catch (const std::exception& e) {
+        std::cerr << "server: " << e.what() << "\n";
+        reply(client_id, make_error(req.request_id, ErrorCode::IPC_ERROR, "failed to create topic"));
+        return;
+    }
+    topics_.emplace(topic_name, std::move(topic));
+    ServerToClientMessage ok = make_ok(req.request_id);
+    std::strncpy(ok.response.topic_name, topic_name.c_str(), MAX_ID_LEN);
+    reply(client_id, ok);
 }
 
 void Server::handle_list_topics(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+    std::string joined;
+    for (const auto& entry : topics_) {
+        std::size_t needed = entry.first.size() + (joined.empty() ? 0 : 1);
+        if (joined.size() + needed >= MAX_TOPIC_LIST_LEN)
+            break;
+        if (!joined.empty())
+            joined += ',';
+        joined += entry.first;
+    }
+    ServerToClientMessage ok = make_ok(req.request_id);
+    std::strncpy(ok.response.topic_list, joined.c_str(), MAX_TOPIC_LIST_LEN - 1);
+    reply(client_id, ok);
 }
 
 void Server::handle_register_client(const IpcRequest& req) {
