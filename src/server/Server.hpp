@@ -3,6 +3,7 @@
 
 #include "Topic.hpp"
 #include "ipc_protocol.h"
+#include "ClientRegistry.hpp"
 
 #include <mqueue.h>
 #include <string>
@@ -39,7 +40,8 @@ private:
     std::string main_queue_name_;
     mqd_t       main_mq_ = static_cast<mqd_t>(-1);
 
-    std::map<std::string, std::unique_ptr<Topic>> topics_;
+    std::map<std::string, std::unique_ptr<Topic>>   topics_;
+    ClientRegistry                                  registry_;
 };
 }
 #endif // TREENITY_SERVER_HPP

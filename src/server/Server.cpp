@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <unistd.h>
 #include <cctype>
+#include <optional>
 
 namespace treenity {
 namespace {
@@ -155,8 +156,51 @@ void Server::handle_list_topics(const IpcRequest& req) {
 }
 
 void Server::handle_register_client(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+    std::string topic_name = field_to_string(req.topic_name, sizeof(req.topic_name));
+    std::string prefix = field_to_string(req.prefix, sizeof(req.prefix));
+    if (!is_valid_id(topic_name)) {
+        reply(client_id, make_error(req.request_id, ErrorCode::GENERAL, "invalid topic name"));
+        return;
+    }
+    auto topic_it = topics_.find(topic_name);
+    if (topic_it == topics_.end()) {
+        reply(client_id, make_error(req.request_id, ErrorCode::TOPIC_ERROR, "topic not found"));
+        return;
+    }
+    std::optional<ClientMetadata> existing = registry_.get(client_id);
+    if (existing && existing->active) {
+        reply(client_id, make_error(req.request_id, ErrorCode::TOPIC_ERROR, "duplicate client name"));
+        return;
+    }
+    if (existing && existing->topic != topic_name) {
+        auto old_topic_id = topics_.find(existing->topic);
+        if (old_topic_id != topics_.end())
+            old_topic_id->second->remove_consumer(client_id);
+    }
+    uint32_t start_offset = 0;
+    if (req.has_offset)
+        start_offset = req.requested_offset;
+    else if (existing && existing->topic == topic_name)
+        start_offset = existing->offset;
+    
+    ClientMetadata meta;
+    meta.client_id = client_id;
+    meta.topic = topic_name;
+    meta.offset = start_offset;
+    meta.prefix = prefix;
+    meta.ipc_path = client_queue_name(pid_, client_id);
+    meta.active = true;
+    registry_.upsert(meta);
+
+    ServerToClientMessage ok = make_ok(req.request_id);
+    ok.response.offset = start_offset;
+    std::strncpy(ok.response.topic_name, topic_name.c_str(), MAX_ID_LEN);
+    std::strncpy(ok.response.prefix, prefix.c_str(), MAX_PREFIX_LEN);
+    std::strncpy(ok.response.ipc_path, meta.ipc_path.c_str(), MAX_IPC_PATH_LEN - 1);
+    reply(client_id, ok);
+
+    topic_it->second->add_consumer(client_id, prefix, meta.ipc_path, start_offset);
 }
 
 void Server::handle_produce_start(const IpcRequest& req) {
