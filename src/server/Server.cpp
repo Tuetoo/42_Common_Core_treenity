@@ -223,17 +223,42 @@ void Server::handle_produce_start(const IpcRequest& req) {
 }
 
 void Server::handle_info(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string caller_id = field_to_string(req.client_id, sizeof(req.client_id));
+    std::string queried_id = field_to_string(req.query_client_id, sizeof(req.query_client_id));
+    if (!is_valid_id(queried_id)) {
+        reply(caller_id, make_error(req.request_id, ErrorCode::GENERAL, "invalid client name"));
+        return;
+    }
+    std::optional<ClientMetadata> meta = registry_.get(queried_id);
+    if (!meta) {
+        reply(caller_id, make_error(req.request_id, ErrorCode::TOPIC_ERROR, "client not found"));
+        return;
+    }
+
+    ServerToClientMessage ok = make_ok(req.request_id);
+    ok.response.offset = meta->offset;
+    std::strncpy(ok.response.client_id, meta->client_id.c_str(), MAX_ID_LEN);
+    std::strncpy(ok.response.topic_name, meta->topic.c_str(), MAX_ID_LEN);
+    std::strncpy(ok.response.prefix, meta->prefix.c_str(), MAX_PREFIX_LEN);
+    std::strncpy(ok.response.ipc_path, meta->ipc_path.c_str(), MAX_IPC_PATH_LEN - 1);
+    reply(caller_id, ok);
 }
 
 void Server::handle_consumer_ack(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+    if (!registry_.set_offset(client_id, req.ack_offset))
+        std::cerr << "server: CONSUMER_ACK from unknown client '" << client_id << "'\n";
 }
 
 void Server::handle_disconnect(const IpcRequest& req) {
-    reply(field_to_string(req.client_id, sizeof(req.client_id)),
-          make_error(req.request_id, ErrorCode::GENERAL, "not implemented yet"));
+    std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+    std::optional<ClientMetadata> meta = registry_.get(client_id);
+    if (meta) {
+        auto topic_it = topics_.find(meta->topic);
+        if (topic_it != topics_.end())
+            topic_it->second->remove_consumer(client_id);
+        registry_.set_active(client_id, false);
+    }
+    reply(client_id, make_ok(req.request_id));
 }
 }
