@@ -100,7 +100,7 @@ namespace treenity {
     }
 
     inline std::string topic_data_queue_name(pid_t server_pid, const std::string& topic_name) {
-        return "/treenity.server." + std::to_string(server_pid) + ".topic." + topic_name;
+        return "/treenity.topic." + std::to_string(server_pid) + "." + topic_name;
     }
 
     static_assert(sizeof(IpcRequest) <= static_cast<std::size_t>(MAIN_QUEUE_MAX_MSG_SIZE),
