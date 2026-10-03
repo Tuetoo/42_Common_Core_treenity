@@ -8,9 +8,36 @@
 #include <unistd.h>
 #include <cctype>
 #include <optional>
+#include <csignal>
+#include <poll.h>
 
 namespace treenity {
 namespace {
+volatile sig_atomic_t g_shutdown_requested = 0;
+
+void on_shutdown_signal(int) {
+    g_shutdown_requested = 1;
+}
+
+void force_exit_on_alarm(int) {
+    _exit(0);
+}
+
+void install_signal_handlers() {
+    struct sigaction sa {};
+    sa.sa_handler = on_shutdown_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+
+    struct sigaction sa_alarm {};
+    sa_alarm.sa_handler = force_exit_on_alarm;
+    sigemptyset(&sa_alarm.sa_mask);
+    sa_alarm.sa_flags = 0;
+    sigaction(SIGALRM, &sa_alarm, nullptr);
+}
+
 std::string field_to_string(const char* field, std::size_t capacity) {
     return std::string(field, strnlen(field, capacity));
 }
@@ -38,9 +65,32 @@ Server::~Server() {
 }
 
 void Server::run() {
+    install_signal_handlers();
+
+    sigset_t blocked, original;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGINT);
+    sigaddset(&blocked, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &blocked, &original);
+
     std::cout << main_queue_name_ << std::endl;
 
-    while (true) {
+    while (!g_shutdown_requested) {
+        struct pollfd pfd {};
+        pfd.fd = main_mq_;
+        pfd.events = POLLIN;
+        int ready = ppoll(&pfd, 1, nullptr, &original);
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            std::cerr << "server: ppoll failed: " << std::strerror(errno) << "\n";
+            break;
+        }
+        if (!(pfd.revents & POLLIN)) {
+            std::cerr << "server: main queue is no longer readable\n";
+            break;
+        }
+
         char buf[MAIN_QUEUE_MAX_MSG_SIZE];
         ssize_t n = mq_receive(main_mq_, buf, sizeof(buf), nullptr);
         if (n < 0) {
@@ -68,6 +118,16 @@ void Server::run() {
                           << static_cast<int>(req.type) << " on the main queue\n";
         }
     }
+    shutdown();
+}
+
+void Server::shutdown() {
+    alarm(5);
+    std::cerr << "server: shutting down, stopping " << topics_.size() << " topic(s)\n";
+    for (auto& entry : topics_)
+        entry.second->stop();
+    topics_.clear();
+    alarm(0);
 }
 
 bool Server::is_valid_id(const std::string& id) {
