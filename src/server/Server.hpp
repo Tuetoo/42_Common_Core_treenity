@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <map>
 #include <memory>
+#include <chrono>
 
 namespace treenity {
 
@@ -35,7 +36,7 @@ private:
     static ServerToClientMessage make_ok(uint64_t request_id);
     static ServerToClientMessage make_error(uint64_t request_id, ErrorCode code, const std::string& message);
     static bool is_valid_id(const std::string& id);
-    void shutdown();
+    void begin_shutdown();
 
     pid_t       pid_;
     std::string main_queue_name_;
@@ -43,6 +44,9 @@ private:
 
     std::map<std::string, std::unique_ptr<Topic>>   topics_;
     ClientRegistry                                  registry_;
+    std::size_t                                     active_consumers_ = 0;
+    bool                                            shutting_down_ = false;
+    std::chrono::steady_clock::time_point           shutdown_deadline_;                      
 };
 }
 #endif // TREENITY_SERVER_HPP
