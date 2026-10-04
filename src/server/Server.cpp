@@ -75,17 +75,43 @@ void Server::run() {
 
     std::cout << main_queue_name_ << std::endl;
 
-    while (!g_shutdown_requested) {
+    while (true) {
+        if (g_shutdown_requested && !shutting_down_) 
+            begin_shutdown();
+        if (shutting_down_) {
+            if (active_consumers_ == 0)
+                break;
+            if (std::chrono::steady_clock::now() >= shutdown_deadline_) {
+                std::cerr << "server: " << active_consumers_
+                          << " consumer(s) did not disconnect in time\n";
+                break;
+            }
+        }
+        
+        struct timespec timeout {};
+        struct timespec* timeout_ptr = nullptr;
+        if (shutting_down_) {
+            auto remaining = shutdown_deadline_ - std::chrono::steady_clock::now();
+            auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(remaining).count();
+            if (ns < 0)
+                ns = 0;
+            timeout.tv_sec = static_cast<time_t>(ns / 1000000000);
+            timeout.tv_nsec = static_cast<long>(ns % 1000000000);
+            timeout_ptr = &timeout;
+        } 
+
         struct pollfd pfd {};
         pfd.fd = main_mq_;
         pfd.events = POLLIN;
-        int ready = ppoll(&pfd, 1, nullptr, &original);
+        int ready = ppoll(&pfd, 1, timeout_ptr, &original);
         if (ready < 0) {
             if (errno == EINTR)
                 continue;
             std::cerr << "server: ppoll failed: " << std::strerror(errno) << "\n";
             break;
         }
+        if (ready == 0)
+            continue;
         if (!(pfd.revents & POLLIN)) {
             std::cerr << "server: main queue is no longer readable\n";
             break;
@@ -101,8 +127,13 @@ void Server::run() {
         }
         IpcRequest req;
         std::memcpy(&req, buf, sizeof(req));
-        if (!is_valid_id(field_to_string(req.client_id, sizeof(req.client_id)))) {
+        std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
+        if (!is_valid_id(client_id)) {
             std::cerr << "server: dropping request with an invalid client id\n";
+            continue;
+        }
+        if (shutting_down_ && req.type != MessageType::CONSUMER_ACK && req.type != MessageType::DISCONNECT) {
+            reply(client_id, make_error(req.request_id, ErrorCode::IPC_ERROR, "server is shutting down"));
             continue;
         }
         switch (req.type) {
@@ -118,16 +149,19 @@ void Server::run() {
                           << static_cast<int>(req.type) << " on the main queue\n";
         }
     }
-    shutdown();
+    alarm(0);
 }
 
-void Server::shutdown() {
+void Server::begin_shutdown() {
+    shutting_down_ = true;
+    shutdown_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(4);
     alarm(5);
-    std::cerr << "server: shutting down, stopping " << topics_.size() << " topic(s)\n";
+
+    std::cerr << "server: shutting down, stopping " << topics_.size() << " topic(s), waiting for "
+              << active_consumers_ << " consumer(s) to commit\n";
     for (auto& entry : topics_)
         entry.second->stop();
     topics_.clear();
-    alarm(0);
 }
 
 bool Server::is_valid_id(const std::string& id) {
@@ -252,6 +286,7 @@ void Server::handle_register_client(const IpcRequest& req) {
     meta.ipc_path = client_queue_name(pid_, client_id);
     meta.active = true;
     registry_.upsert(meta);
+    ++active_consumers_;
 
     ServerToClientMessage ok = make_ok(req.request_id);
     ok.response.offset = start_offset;
@@ -317,6 +352,8 @@ void Server::handle_disconnect(const IpcRequest& req) {
         auto topic_it = topics_.find(meta->topic);
         if (topic_it != topics_.end())
             topic_it->second->remove_consumer(client_id);
+        if (meta->active && active_consumers_ > 0)
+            --active_consumers_;
         registry_.set_active(client_id, false);
     }
     reply(client_id, make_ok(req.request_id));
