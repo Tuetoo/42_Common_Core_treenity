@@ -1,11 +1,12 @@
 #ifndef TREENITY_CLIENT_REGISTRY_HPP
 #define TREENITY_CLIENT_REGISTRY_HPP
 
+#include "HashMap.hpp"
+
 #include <cstdint>
 #include <optional>
 #include <shared_mutex>
 #include <string>
-#include <unordered_map>
 
 namespace treenity {
 
@@ -30,7 +31,7 @@ public:
 
 private:
     mutable std::shared_mutex mutex_;
-    std::unordered_map<std::string, ClientMetadata> clients_;
+    HashMap<std::string, ClientMetadata> clients_;
 };
 }
 
