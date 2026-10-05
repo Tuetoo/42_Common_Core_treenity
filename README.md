@@ -178,7 +178,9 @@ prefixes because prefix membership is exactly what a trie is built for —
 checking "does any registered prefix match this key" falls out of the walk
 for free, with no per-node string comparison needed.
 
-Both structures are owned by the server; `ClientRegistry`/`PrefixIndex` are
+The trie's child links use `std::map`, and its id-to-consumer lookup reuses the
+hand-written hash map above, so `std::unordered_map` is not used anywhere. Both 
+structures are owned by the server; `ClientRegistry`/`PrefixIndex` are
 implemented by `jiezhang`/`mtaranti` respectively but called from the
 server's dispatch loop and topic worker threads — see `treenity_technical_notes.md`
 for the interface history.
