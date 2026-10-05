@@ -24,18 +24,18 @@
 - Graceful shutdown: SIGINT/SIGTERM handling, wait for consumers to commit (max 5s), sentinel message to unblock consumers
 - Server responsibilities: topic create/list, client registration, message routing to consumers
 - Main queue dispatch loop: single reader/router reading the main request queue and routing to handlers
-- **Status: done and merged** (Server, Topic, shutdown wait, `ClientRegistry` hashmap).
-- **`PrefixIndex` confirmed and replaced**: mtaranti swapped the placeholder linear scan for a real trie (`src/server/PrefixIndex.{hpp,cpp}`), same public interface so `Topic` didn't need any changes. See "Data Structures" in `README.md` for the design.
+- Hand-written hash map (separate chaining, FNV-1a, 0.75 load factor) behind `ClientRegistry` (`src/server/HashMap.hpp`)
+- **Status: done and merged** (Server, Topic, shutdown wait, `ClientRegistry` on the hash map).
 
 ### 👤 Person B — Client, Data Structures & Protocol
-**Focus:** CLI client, message formats, tests
+**Focus:** CLI client, trie-based prefix index, message formats, tests
 
 **Tasks — all done and merged:**
 - Client executable: subcommand parsing (`create`, `list`, `produce`, `subscribe`, `info`) — `src/client/main.cpp` + one file per command
 - Message formats: text mode (`key:body`) and `--raw` binary mode (little-endian, int32 sizes) — `src/client/Codec.{hpp,cpp}`
 - Client-side offset handling (commit = last offset + 1, resume, custom `--offset`) — `Subscribe.cpp`
 - Client's own response queue: creation and cleanup (`mq_unlink`) on disconnect/exit — `IpcClient.{hpp,cpp}`
-- `PrefixIndex` trie (see Person A's status above)
+- `PrefixIndex` trie (`src/server/PrefixIndex.{hpp,cpp}`): replaced the placeholder linear scan with a trie, same public interface so `Topic` needed no changes. See "Data Structures" in `README.md`.
 - Unit tests (Google Test) for the hashmap and prefix matching, `make test` wired (`pkg-config gtest gtest_main`), `libgtest-dev` added to the devcontainer
 - Local validation of client id / topic name (see Client contract below) — `Validation.hpp`
 - One-shot commands (`create`/`list`/`produce`/`info`) have no explicit client id in the CLI spec, so they use an ephemeral internal id (`<tag><pid>`, e.g. `c1234`) purely to route the server's reply; `subscribe`'s client_id is the real, stable `<subscriber_name>`.

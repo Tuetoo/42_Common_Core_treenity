@@ -178,7 +178,9 @@ prefixes because prefix membership is exactly what a trie is built for —
 checking "does any registered prefix match this key" falls out of the walk
 for free, with no per-node string comparison needed.
 
-Both structures are owned by the server; `ClientRegistry`/`PrefixIndex` are
+The trie's child links use `std::map`, and its id-to-consumer lookup reuses the
+hand-written hash map above, so `std::unordered_map` is not used anywhere. Both 
+structures are owned by the server; `ClientRegistry`/`PrefixIndex` are
 implemented by `jiezhang`/`mtaranti` respectively but called from the
 server's dispatch loop and topic worker threads — see `treenity_technical_notes.md`
 for the interface history.
@@ -224,3 +226,5 @@ with end-to-end integration tests run against the real `server` binary
 (create/list/produce/subscribe/info, prefix filtering, offset resume, raw
 binary mode, and graceful shutdown via `SIGINT`) before being committed —
 see the git history for the resulting commits.
+
+**AI usage (`jiezhang`).** Claude (Anthropic) was used as a tutor and code reviewer for the server side, for which `jiezhang` had no prior C++ experience. For each piece (`Server`, `Topic`, the hash map behind `ClientRegistry`, the shutdown sequence) Claude explained the design and the C++/POSIX concepts, proposed the code, and asked comprehension questions. `jiezhang` entered the code, built it, fixed the compile errors, ran small throw-away test programs against it, and committed each step on its own branch. Claude also read `mtaranti`'s client and trie, ran them against the server, and pointed out issues that the two of us then discussed.
