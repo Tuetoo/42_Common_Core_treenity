@@ -1,6 +1,6 @@
 # treenity — Technical Design Notes
 
-*Living document tracking role split and shared technical decisions. Last updated: 2026-10-04 (server complete; shutdown contract and queue names changed).*
+*Living document tracking role split and shared technical decisions. Last updated: 2026-10-05 (client complete; PrefixIndex replaced with a trie; gtest + README added).*
 
 ---
 
@@ -24,24 +24,26 @@
 - Graceful shutdown: SIGINT/SIGTERM handling, wait for consumers to commit (max 5s), sentinel message to unblock consumers
 - Server responsibilities: topic create/list, client registration, message routing to consumers
 - Main queue dispatch loop: single reader/router reading the main request queue and routing to handlers
-- **Status: done and merged** (Server, Topic, shutdown wait).
-- **Now in progress: `ClientRegistry` (manual hashmap) and `PrefixIndex` (efficient prefix structure).** Originally Person B's list; Person A is writing them with guided help. Person B to confirm. Person B still owns the gtest tests for prefix matching.
+- **Status: done and merged** (Server, Topic, shutdown wait, `ClientRegistry` hashmap).
+- **`PrefixIndex` confirmed and replaced**: mtaranti swapped the placeholder linear scan for a real trie (`src/server/PrefixIndex.{hpp,cpp}`), same public interface so `Topic` didn't need any changes. See "Data Structures" in `README.md` for the design.
 
 ### 👤 Person B — Client, Data Structures & Protocol
 **Focus:** CLI client, message formats, tests
 
-**Tasks:**
-- Client executable: subcommand parsing (`create`, `list`, `produce`, `subscribe`, `info`) — must match CLI spec exactly
-- Message formats: text mode (`key:body`) and `--raw` binary mode (little-endian, int32 sizes)
-- Client-side offset handling (commit = last offset + 1, resume, custom `--offset`)
-- Client's own response queue: creation and cleanup (`mq_unlink`) on disconnect/exit
-- Unit tests (Google Test) for the hashmap and prefix matching, and a real `make test`
-- Local validation of client id / topic name (see Client contract below)
+**Tasks — all done and merged:**
+- Client executable: subcommand parsing (`create`, `list`, `produce`, `subscribe`, `info`) — `src/client/main.cpp` + one file per command
+- Message formats: text mode (`key:body`) and `--raw` binary mode (little-endian, int32 sizes) — `src/client/Codec.{hpp,cpp}`
+- Client-side offset handling (commit = last offset + 1, resume, custom `--offset`) — `Subscribe.cpp`
+- Client's own response queue: creation and cleanup (`mq_unlink`) on disconnect/exit — `IpcClient.{hpp,cpp}`
+- `PrefixIndex` trie (see Person A's status above)
+- Unit tests (Google Test) for the hashmap and prefix matching, `make test` wired (`pkg-config gtest gtest_main`), `libgtest-dev` added to the devcontainer
+- Local validation of client id / topic name (see Client contract below) — `Validation.hpp`
+- One-shot commands (`create`/`list`/`produce`/`info`) have no explicit client id in the CLI spec, so they use an ephemeral internal id (`<tag><pid>`, e.g. `c1234`) purely to route the server's reply; `subscribe`'s client_id is the real, stable `<subscriber_name>`.
 
 ### 🤝 Shared work
-- Review and finalize `ipc_protocol.h` together (frozen contract below)
-- README.md (split sections, joint review)
-- Final integration testing with `ft_aquarium` / `ft_fish`
+- Review and finalize `ipc_protocol.h` together (frozen contract below) — done
+- `README.md` — done (Description/Instructions/Resources + Architecture/IPC Choice/Data Structures/Testing)
+- Final integration testing with `ft_aquarium` / `ft_fish` — **still blocked, the binaries haven't been received yet**; manual smoke tests (create/list/produce/subscribe/info, prefix filtering, offset resume, raw mode, SIGINT shutdown) were run directly against `server`+`client` instead, see README's AI-usage note
 - Git: branch + merge only after the other person has reviewed the code
 
 ---
@@ -99,10 +101,14 @@
 
 ## Client contract (what Person B must do)
 
-1. **Validate ids locally.** Client id and topic name must match `^[a-zA-Z0-9_.-]{1,32}$`. If not, print an error and exit 1. The server silently drops requests with an invalid `client_id` because it has no queue to reply to.
-2. **On `SHUTDOWN` (subscriber):** send the final `CONSUMER_ACK`, then `DISCONNECT`, then `mq_unlink` own queue and exit 0. If the client skips `DISCONNECT`, the server waits the full 4 seconds.
-3. **Tolerate `IPC_ERROR "server is shutting down"`** as a normal reply during shutdown (do not crash or hang).
-4. **Topic data queue name** is now `/treenity.topic.<pid>.<name>`. Do not build it by hand; use `topic_data_queue_name()` from `ipc_protocol.h`, or use the path returned by `PRODUCE_START`.
+All four points below are implemented in `src/client/`:
+
+1. **Validate ids locally.** Client id and topic name must match `^[a-zA-Z0-9_.-]{1,32}$`. If not, print an error and exit 1. The server silently drops requests with an invalid `client_id` because it has no queue to reply to. (`Validation.hpp`, checked before any network call in every command.)
+2. **On `SHUTDOWN` (subscriber):** send the final `CONSUMER_ACK`, then `DISCONNECT`, then `mq_unlink` own queue and exit 0. If the client skips `DISCONNECT`, the server waits the full 4 seconds. (Same path is taken on `SIGINT`/`SIGTERM`, not just the server's `SHUTDOWN` sentinel — `Subscribe.cpp`.)
+3. **Tolerate `IPC_ERROR "server is shutting down"`** as a normal reply during shutdown (do not crash or hang). Handled by the ordinary error-forwarding path: it just becomes exit code 3 like any other IPC error.
+4. **Topic data queue name** is now `/treenity.topic.<pid>.<name>`. Do not build it by hand; use `topic_data_queue_name()` from `ipc_protocol.h`, or use the path returned by `PRODUCE_START`. The client never reconstructs it — `Produce.cpp` only ever uses the path the server hands back.
+
+**One bug worth flagging for the defense:** `subscribe`'s consumer-message printing must `flush` stdout after every message, not just at the end. `std::cout` is fully buffered once it isn't a terminal (i.e. the moment it's piped into `ft_aquarium` or redirected to a file), so without an explicit flush nothing shows up until the libc buffer fills or the process exits — which defeats the entire "real-time" point of the system. Caught via a smoke test where a redirected subscriber's output file stayed empty while the process was still running.
 
 ---
 
