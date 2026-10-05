@@ -226,3 +226,5 @@ with end-to-end integration tests run against the real `server` binary
 (create/list/produce/subscribe/info, prefix filtering, offset resume, raw
 binary mode, and graceful shutdown via `SIGINT`) before being committed —
 see the git history for the resulting commits.
+
+**AI usage (`jiezhang`).** Claude (Anthropic) was used as a tutor and code reviewer for the server side, for which `jiezhang` had no prior C++ experience. For each piece (`Server`, `Topic`, the hash map behind `ClientRegistry`, the shutdown sequence) Claude explained the design and the C++/POSIX concepts, proposed the code, and asked comprehension questions. `jiezhang` entered the code, built it, fixed the compile errors, ran small throw-away test programs against it, and committed each step on its own branch. Claude also read `mtaranti`'s client and trie, ran them against the server, and pointed out issues that the two of us then discussed.
