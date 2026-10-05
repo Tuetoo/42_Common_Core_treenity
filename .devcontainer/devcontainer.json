@@ -4,7 +4,7 @@
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
     "remoteUser": "root",
-    "postCreateCommand": "apt-get update && apt-get install -y g++ gdb make cmake libgtest-dev pkg-config",
+    "postCreateCommand": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y g++ gdb make cmake libgtest-dev pkg-config",
     "customizations": {
         "vscode": {
             "extensions": [
