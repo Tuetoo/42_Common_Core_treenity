@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <csignal>
+#include <ctime>
 
 namespace treenity {
 
@@ -192,7 +193,7 @@ void Topic::deliver_to(const ConsumerHandle& consumer, const StoredMessage& msg)
                   << " is too large to deliver, skipping\n";
         return;
     }
-    mqd_t mq = mq_open(consumer.ipc_path.c_str(), O_WRONLY | O_NONBLOCK);
+    mqd_t mq = mq_open(consumer.ipc_path.c_str(), O_WRONLY);
     if (mq == static_cast<mqd_t>(-1)) {
         std::cerr << "[topic " << name_ << "] consumer " << consumer.client_id
                   << " unreachable (" << std::strerror(errno) << "), dropping this delivery\n";
@@ -206,7 +207,12 @@ void Topic::deliver_to(const ConsumerHandle& consumer, const StoredMessage& msg)
     out.consumer_msg.value_size = static_cast<uint32_t>(msg.value.size());
     std::memcpy(out.consumer_msg.data, msg.key.data(), msg.key.size());
     std::memcpy(out.consumer_msg.data + msg.key.size(), msg.value.data(), msg.value.size());
-    if (mq_send(mq, reinterpret_cast<const char*>(&out), sizeof(out), 0) == -1) {
+    struct timespec deadline {};
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += 200L * 1000000L;
+    deadline.tv_sec += deadline.tv_nsec / 1000000000L;
+    deadline.tv_nsec %= 1000000000L;
+    if (mq_timedsend(mq, reinterpret_cast<const char*>(&out), sizeof(out), 0, &deadline) == -1) {
         std::cerr << "[topic " << name_ << "] mq_send to " <<consumer.client_id
                   << " failed: " << std::strerror(errno) << "\n";
     }
