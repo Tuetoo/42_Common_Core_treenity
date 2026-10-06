@@ -27,6 +27,7 @@ public:
     // queue for writing. False means "invalid IPC identifier" (exit 1):
     // either queue could not be opened.
     bool connect();
+    bool name_in_use() const { return name_in_use_; }
 
     // Sends `req` over the main queue (client_id/request_id filled in
     // here) and blocks for exactly one reply on this client's own queue.
@@ -47,6 +48,7 @@ public:
     void cleanup();
 
 private:
+    bool name_in_use_ = false;
     uint64_t next_request_id();
 
     std::string main_queue_path_;

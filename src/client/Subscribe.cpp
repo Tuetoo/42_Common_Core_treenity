@@ -68,8 +68,11 @@ int run_subscribe(const std::string& ipc_path, const std::string& topic_name,
     // across reconnections so the server can match it against the stored
     // offset (VI.6/VIII.1 "a returning subscriber ... resumes").
     IpcClient client(ipc_path, subscriber_name);
-    if (!client.connect())
+    if (!client.connect()) {
+        if (client.name_in_use())
+            return fail("duplicate client name", 2);
         return fail("could not reach server at '" + ipc_path + "'", 1);
+    }
 
     install_signal_handlers();
 
