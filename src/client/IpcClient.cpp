@@ -22,10 +22,11 @@ bool IpcClient::connect() {
     attr.mq_msgsize = CLIENT_QUEUE_MAX_MSG_SIZE;
     attr.mq_curmsgs = 0;
 
-    mq_unlink(own_queue_path_.c_str());
-    own_mq_ = mq_open(own_queue_path_.c_str(), O_CREAT | O_RDONLY, 0600, &attr);
-    if (own_mq_ == static_cast<mqd_t>(-1))
+    own_mq_ = mq_open(own_queue_path_.c_str(), O_CREAT | O_EXCL | O_RDONLY, 0600, &attr);
+    if (own_mq_ == static_cast<mqd_t>(-1)) {
+        name_in_use_ = (errno == EEXIST);
         return false;
+    }
 
     main_mq_ = mq_open(main_queue_path_.c_str(), O_WRONLY);
     if (main_mq_ == static_cast<mqd_t>(-1)) {
