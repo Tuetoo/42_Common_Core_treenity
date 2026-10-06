@@ -508,29 +508,6 @@ make test
   found, and erasing one key removes only that key;
 - growth under load: many inserts trigger rehashing and every key stays findable.
 
-### End-to-end checks
-
-The unit tests do not start processes, so the whole system was also checked by
-hand against the real binaries. The main scenario was also run once with the
-server and client built with `-fsanitize=address,undefined` and once with
-`-fsanitize=thread`, without any report. The scenarios:
-
-- the example of the subject: create, subscribe with a prefix, produce four
-  messages, `info` shows offset 4;
-- error codes: duplicate topic (2), unknown client (2), unknown topic on produce
-  and on subscribe (2), invalid IPC identifier (1), invalid client name (1),
-  duplicate subscriber name (2);
-- a duplicate subscriber is refused without disturbing the running one;
-- resume: a returning subscriber continues from its stored offset, and
-  `--offset` jumps to an explicit one;
-- replaying 200 messages to a new subscriber delivers all 200; replaying 1000
-  large messages to a deliberately slow reader delivers about 990 (it was 76
-  before deliveries were allowed to wait for room in the queue);
-- raw mode: valid records, an oversized key or value (exit 1 without a
-  crash), and a truncated record (exit 1);
-- shutdown with `SIGINT`: subscribers exit with code 0, the server exits, and
-  no queue is left behind in `/dev/mqueue`.
-
 ## Project layout
 
 ```

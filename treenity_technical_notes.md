@@ -99,19 +99,6 @@
 
 ---
 
-## Client contract (what Person B must do)
-
-All four points below are implemented in `src/client/`:
-
-1. **Validate ids locally.** Client id and topic name must match `^[a-zA-Z0-9_.-]{1,32}$`. If not, print an error and exit 1. The server silently drops requests with an invalid `client_id` because it has no queue to reply to. (`Validation.hpp`, checked before any network call in every command.)
-2. **On `SHUTDOWN` (subscriber):** send the final `CONSUMER_ACK`, then `DISCONNECT`, then `mq_unlink` own queue and exit 0. If the client skips `DISCONNECT`, the server waits the full 4 seconds. (Same path is taken on `SIGINT`/`SIGTERM`, not just the server's `SHUTDOWN` sentinel — `Subscribe.cpp`.)
-3. **Tolerate `IPC_ERROR "server is shutting down"`** as a normal reply during shutdown (do not crash or hang). Handled by the ordinary error-forwarding path: it just becomes exit code 3 like any other IPC error.
-4. **Topic data queue name** is now `/treenity.topic.<pid>.<name>`. Do not build it by hand; use `topic_data_queue_name()` from `ipc_protocol.h`, or use the path returned by `PRODUCE_START`. The client never reconstructs it — `Produce.cpp` only ever uses the path the server hands back.
-
-**One bug worth flagging for the defense:** `subscribe`'s consumer-message printing must `flush` stdout after every message, not just at the end. `std::cout` is fully buffered once it isn't a terminal (i.e. the moment it's piped into `ft_aquarium` or redirected to a file), so without an explicit flush nothing shows up until the libc buffer fills or the process exits — which defeats the entire "real-time" point of the system. Caught via a smoke test where a redirected subscriber's output file stayed empty while the process was still running.
-
----
-
 ## Known limitations (for the defense)
 
 - Delivery waits at most 200 ms for room in a consumer's queue (10 slots) and then drops that message with a log line. A consumer that stays stuck still loses messages and slows down its own topic. (Before this change delivery was fully non-blocking: replaying 1000 large messages to a slow reader delivered 76, now about 990.)
