@@ -17,7 +17,8 @@ bool contains(const std::vector<ConsumerHandle>& result, const std::string& clie
 }
 
 ConsumerHandle make_consumer(std::string client_id, std::string prefix) {
-    return ConsumerHandle{std::move(client_id), std::move(prefix), "/some/path." + client_id};
+    std::string ipc_path = "/some/path." + client_id;
+    return ConsumerHandle{std::move(client_id), std::move(prefix), std::move(ipc_path)};
 }
 
 }
