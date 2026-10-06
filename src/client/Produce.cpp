@@ -53,6 +53,8 @@ int produce_raw(mqd_t data_mq) {
         if (status == ReadStatus::EOF_PARTIAL)
             return fail("partial record at EOF (truncated key size)", 1);
         uint32_t key_size = read_u32_le(size_buf);
+        if (key_size > MAX_KV_LEN)
+            return fail("record exceeds the " + std::to_string(MAX_KV_LEN) + "-byte key+body limit", 1);
 
         std::string key(key_size, '\0');
         if (key_size > 0 && read_exact(std::cin, key.data(), key_size) != ReadStatus::OK)
@@ -62,6 +64,8 @@ int produce_raw(mqd_t data_mq) {
         if (status != ReadStatus::OK)
             return fail("partial record at EOF (truncated value size)", 1);
         uint32_t value_size = read_u32_le(size_buf);
+        if (value_size > MAX_KV_LEN - key_size)
+            return fail("record exceeds the " + std::to_string(MAX_KV_LEN) + "-byte key+body limit", 1);
 
         std::string value(value_size, '\0');
         if (value_size > 0 && read_exact(std::cin, value.data(), value_size) != ReadStatus::OK)
