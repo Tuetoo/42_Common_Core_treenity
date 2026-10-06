@@ -1,5 +1,11 @@
 obj/
 /server
 /client
+/test_runner
 *.o
 *.d
+
+# Local-only subject material (PDFs, the gitinette checker) - not project deliverables
+treenity.pdf
+git_guidelines.pdf
+gitinette
