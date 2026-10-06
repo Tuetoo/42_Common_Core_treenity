@@ -1,6 +1,6 @@
 # treenity — Technical Design Notes
 
-*Living document tracking role split and shared technical decisions. Last updated: 2026-10-05 (client complete; PrefixIndex replaced with a trie; gtest + README added).*
+*Living document tracking role split and shared technical decisions. Last updated: 2026-10-06 (delivery waits for room in a full consumer queue; duplicate subscribers can no longer remove a running subscriber's queue; raw records are size-checked before allocation).*
 
 ---
 
@@ -65,8 +65,8 @@
 - Message struct size accounts for the 1024-byte max key+body payload plus protocol metadata.
 
 ### Queue ownership & cleanup
-- A client unlinks its own response queue (`mq_close` + `mq_unlink`) on normal disconnect and on shutdown.
-- The server only opens a client's queue to write to it (`O_NONBLOCK`); it never unlinks it.
+- A client creates its own response queue with `O_CREAT | O_EXCL` and unlinks it (`mq_close` + `mq_unlink`) on normal disconnect and on shutdown. If the name already exists, `subscribe` exits with code 2 (`duplicate client name`) without touching the existing queue.
+- The server only opens a client's queue to write to it; it never unlinks it. Replies from the main thread and the `SHUTDOWN` sentinel are sent with `O_NONBLOCK`. Message deliveries from a topic worker use a blocking open and `mq_timedsend` with a 200 ms deadline, so a full consumer queue (10 slots) delays only that topic's worker.
 - The server unlinks the main queue and all topic data queues on exit.
 
 ### Request/response correlation
@@ -114,7 +114,8 @@ All four points below are implemented in `src/client/`:
 
 ## Known limitations (for the defense)
 
-- Delivery to consumers is non-blocking: a consumer that is too slow can lose messages.
+- Delivery waits at most 200 ms for room in a consumer's queue (10 slots) and then drops that message with a log line. A consumer that stays stuck still loses messages and slows down its own topic. (Before this change delivery was fully non-blocking: replaying 1000 large messages to a slow reader delivered 76, now about 990.)
 - A subscriber that crashes without `DISCONNECT` stays "active", so its name is rejected as a duplicate.
 - `LIST_TOPICS` is capped at 512 bytes (whole names only).
+- Raw mode refuses a record whose key or value size would exceed the 1024-byte key+body limit, before allocating anything (exit code 1).
 - Queue names are `/treenity.server.<pid>`-style, not the subject's `/tmp/...` example (POSIX mq names cannot contain extra slashes; the subject says "e.g.").
