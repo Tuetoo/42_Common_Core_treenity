@@ -17,13 +17,6 @@ struct ConsumerHandle {
     uint32_t    start_offset = 0;
 };
 
-// Trie (prefix tree) over the consumer prefixes registered on a topic.
-// match(key) walks the trie one character of `key` at a time and collects
-// every node crossed along the way, so a consumer registered on "user"
-// matches both "user" and "user.login" but not "admin", in O(key length)
-// rather than scanning every consumer. Empty-prefix consumers never touch
-// the trie: they are tracked separately and always match (subject VI.9,
-// "Direct Addition").
 class PrefixIndex {
 public:
     void add(const ConsumerHandle& consumer);
