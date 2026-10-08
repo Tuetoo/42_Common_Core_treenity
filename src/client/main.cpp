@@ -1,6 +1,7 @@
 #include "Commands.hpp"
 #include "Errors.hpp"
 
+#include <cctype>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -17,6 +18,21 @@ void print_usage() {
         "  client <ipc_identifier> subscribe <topic_name> <subscriber_name> "
         "[--prefix <prefix>] [--offset <offset>] [--raw]\n"
         "  client <ipc_identifier> info <subscriber_name>\n";
+}
+
+bool parse_offset(const std::string& text, uint32_t& out) {
+    if (text.empty() || text.size() > 10)
+        return false;
+    uint64_t value = 0;
+    for (unsigned char c : text) {
+        if (!std::isdigit(c))
+            return false;
+        value = value * 10 + (c - '0');
+    }
+    if (value > UINT32_MAX)
+        return false;
+    out = static_cast<uint32_t>(value);
+    return true;
 }
 
 }
@@ -93,11 +109,8 @@ int main(int argc, char** argv) {
                     print_usage();
                     return 1;
                 }
-                try {
-                    offset = static_cast<uint32_t>(std::stoul(args[++i]));
-                } catch (const std::exception&) {
+                if (!parse_offset(args[++i], offset))
                     return fail("invalid --offset value", 1);
-                }
                 has_offset = true;
             } else {
                 print_usage();
