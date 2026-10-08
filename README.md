@@ -583,7 +583,7 @@ screen, so the dev container does three extra things:
    ```
 
    Click the printed link (`http://localhost:6080/vnc.html?...`). The aquarium
-   opens in the browser and the fish starts swimming.
+   opens in the browser and an animal (for example a seahorse) starts swimming.
 5. **Show the data as text** while it runs. In another terminal:
 
    ```sh
