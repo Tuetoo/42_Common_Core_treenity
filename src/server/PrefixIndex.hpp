@@ -7,12 +7,14 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace treenity {
 struct ConsumerHandle {
     std::string client_id;
     std::string prefix;
     std::string ipc_path;
+    uint32_t    start_offset = 0;
 };
 
 // Trie (prefix tree) over the consumer prefixes registered on a topic.
