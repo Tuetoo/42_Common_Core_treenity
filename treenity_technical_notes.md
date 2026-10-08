@@ -44,7 +44,7 @@
 - Review and finalize `ipc_protocol.h` together (frozen contract below) — done
 - `README.md` — done (Description/Instructions/Resources + Architecture/IPC Choice/Data Structures/Testing)
 - Final integration testing with `ft_aquarium` / `ft_fish` — **still blocked, the binaries haven't been received yet**; manual smoke tests (create/list/produce/subscribe/info, prefix filtering, offset resume, raw mode, SIGINT shutdown) were run directly against `server`+`client` instead, see README's AI-usage note
-- Git: branch + merge only after the other person has reviewed the code
+- Git: every change lives on its own branch and is merged into main with a merge commit; the other person reviews the code
 
 ---
 
