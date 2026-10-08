@@ -4,7 +4,7 @@
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
     "remoteUser": "root",
-    "postCreateCommand": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y g++ gdb make cmake libgtest-dev pkg-config && bash .devcontainer/setup.sh",
+    "postCreateCommand": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y g++ gdb make cmake libgtest-dev pkg-config && bash .devcontainer/setup.sh && bash .devcontainer/display.sh",
     "postStartCommand": "bash .devcontainer/display.sh",
     "containerEnv": { "DISPLAY": ":99" },
     "forwardPorts": [6080],
