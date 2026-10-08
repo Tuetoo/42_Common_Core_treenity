@@ -80,11 +80,13 @@
 ### Main queue dispatch
 - One dispatch loop reads the main queue (`ppoll` + `mq_receive`) and calls the handler for each message type. Topic threads never read the main queue.
 - The server never trusts IPC fields: strings are read with `strnlen`, ids are validated against `^[a-zA-Z0-9_.-]{1,32}$`.
+- A request whose size is not exactly `sizeof(IpcRequest)` is dropped with a log line and never interpreted.
 
 ### Register / offset handling
 - Consumer ACK contains the *next* offset (`received_offset + 1`). The server stores it as the next wanted offset.
 - `REGISTER_CLIENT` has `has_offset` / `requested_offset` to tell "no `--offset`" from explicit `--offset 0`.
 - Returning subscriber without `--offset` resumes from the stored offset. Returning subscriber without `--prefix` gets no filter (current behaviour).
+- The start offset also applies to live delivery: each consumer carries `start_offset`, and a topic delivers a message only if its offset is at least `start_offset`. A subscriber that asks for an offset beyond the current log therefore only receives messages from that offset on.
 - The server replies OK **before** replaying history, so the response always arrives before the first message.
 - A second `REGISTER_CLIENT` for an active client id is rejected as `duplicate client name`.
 
