@@ -108,7 +108,7 @@ void Topic::add_consumer(const std::string& client_id, const std::string& prefix
                             const std::string& ipc_path, uint32_t start_offset) {
     TopicWorkItem item;
     item.kind = TopicWorkItem::Kind::ADD_CONSUMER;
-    item.consumer = ConsumerHandle{client_id, prefix, ipc_path};
+    item.consumer = ConsumerHandle{client_id, prefix, ipc_path, start_offset};
     item.start_offset = start_offset;
     push_work(std::move(item));
 }
@@ -173,8 +173,10 @@ void Topic::worker_loop() {
 void Topic::handle_produced_record(const std::string& key, const std::string& value) {
     uint32_t offset = append(key, value);
     StoredMessage msg{offset, key, value};
-    for (const auto& consumer : consumers_.match(key))
-        deliver_to(consumer, msg);
+    for (const auto& consumer : consumers_.match(key)) {
+        if (offset >= consumer.start_offset)
+            deliver_to(consumer, msg);
+    }
 }
 
 void Topic::handle_add_consumer(const ConsumerHandle& consumer, uint32_t start_offset) {
