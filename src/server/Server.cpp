@@ -125,6 +125,10 @@ void Server::run() {
             std::cerr << "server: mq_receive failed: " << std::strerror(errno) << "\n";
             break;
         }
+        if (n != static_cast<ssize_t>(sizeof(IpcRequest))) {
+            std::cerr << "server: dropping a request of unexpected size " << n << "\n";
+            continue;
+        }
         IpcRequest req;
         std::memcpy(&req, buf, sizeof(req));
         std::string client_id = field_to_string(req.client_id, sizeof(req.client_id));
