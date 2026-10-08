@@ -50,7 +50,8 @@ Key features:
 - `libgtest-dev` and `pkg-config`, only for `make test`.
 
 The `.devcontainer/devcontainer.json` (Ubuntu 24.04) installs all of the
-above if you open the project in a dev container.
+above if you open the project in a dev container. It also prepares what the
+provided `ft_fish` and `ft_aquarium` tools need (see Testing).
 
 ### Build
 
@@ -508,6 +509,124 @@ make test
   found, and erasing one key removes only that key;
 - growth under load: many inserts trigger rehashing and every key stays findable.
 
+### Provided test tools: `ft_fish` and `ft_aquarium`
+
+The subject provides two helper programs to check the system end to end. In the
+archive they are called `fish` and `aquarium`. They are not part of the project
+and are not committed; the repository only contains what is needed to run them.
+
+**What they test**
+
+- `fish` is a producer. It starts our `client` as
+  `client <ipc> produce <topic> --raw` and writes binary records to its
+  standard input. This checks the raw input format
+  `[keysize][key][valuesize][value]` (little-endian) and that records written
+  back to back are all accepted. The keys look like `fish.angelfish.14775.swim`
+  and the values are small JSON texts (`spawn`, `swim`, `bubble`).
+- `aquarium` is a consumer that draws the fish. It starts our `client` as
+  `client <ipc> subscribe <topic> <name> --raw` (with `--prefix` and `--offset`
+  only when `-p` and `-o` are given) and reads its standard output. This checks
+  the raw output format `[offset][keysize][key][valuesize][value]`, that every
+  message is flushed at once, and the subscription itself.
+
+Usage (both accept `-h`):
+
+```
+fish     client_path ipc_identifier topic [--min-delay ms] [--max-delay ms] [--seed n] [--species name]
+aquarium client_path ipc_identifier topic client_name [-o offset] [-p prefix]
+```
+
+**Expected result.** A pixel-art underwater scene opens. One animal (for
+example an orange seahorse) appears and moves around at random. Each `fish` run
+creates one new animal. In `/tmp/aquarium.out` you can see one line per second,
+such as `received message offset=350 key=fish.seahorse.<pid>.swim`, and the
+offset keeps growing. If `aquarium` is started later, or restarted with the same name, it
+resumes from its stored offset. `./client <ipc> info viewer` shows the offset
+growing.
+
+**Why the extra files in `.devcontainer/`**
+
+Both tools are x86-64 Linux programs that open a graphics window as soon as they
+start, even for `-h`. On a normal x86 Linux machine with a screen nothing else is
+needed. On an Apple Silicon Mac the dev container is an ARM Linux without a
+screen, so the dev container does three extra things:
+
+| File | What it does |
+|---|---|
+| `.devcontainer/setup.sh` | Runs once when the container is created. Installs the virtual screen and the VNC tools, and on ARM machines also the x86-64 system libraries (including OpenGL) so Docker's Rosetta can run the x86-64 programs. On an x86 machine it skips the x86-64 part. |
+| `.devcontainer/display.sh` | Runs every time the container starts. Starts a virtual screen (`Xvfb`, display `:99`), a VNC server, and a web bridge on port 6080 so the screen can be seen in a browser. `DISPLAY=:99` is set for every terminal by `devcontainer.json`. |
+| `.devcontainer/demo.sh` | One command that builds the project, starts the server, creates the topic `fishtank`, starts `aquarium` and then `fish`, and prints the link to see the picture. |
+
+**How to run it, step by step**
+
+1. Put the two programs in a folder named `ft_bin` at the root of the project
+   (the folder is ignored by git). Use the Ubuntu 22.04 (`jammy`) versions,
+   which match the Ubuntu 24.04 container. Make them executable:
+   `chmod +x ft_bin/aquarium ft_bin/fish`.
+2. Open the project in the dev container ("Reopen in Container" in VS Code) and
+   wait until it is ready. The first build installs the packages and takes a few
+   minutes.
+3. **Show the text** (no browser needed):
+
+   ```sh
+   ./ft_bin/fish -h
+   ./ft_bin/aquarium -h
+   ```
+
+   The usage text is printed. Two lines starting with `XGB:` about
+   `Xauthority` may appear first; they are harmless. If the container has just
+   started, wait a few seconds or run `bash .devcontainer/display.sh` first.
+4. **Show the picture:**
+
+   ```sh
+   bash .devcontainer/demo.sh
+   ```
+
+   Click the printed link (`http://localhost:6080/vnc.html?...`). The aquarium
+   opens in the browser and the fish starts swimming.
+5. **Show the data as text** while it runs. In another terminal:
+
+   ```sh
+   IPC=$(head -1 /tmp/server.out)
+   ./client "$IPC" subscribe fishtank watch --offset 0
+   ```
+
+   This prints `subscribed to fishtank`, then every event from offset 0. Stop it
+   with Ctrl+C. Do not pipe it into `head`: a subscriber killed by a closed pipe
+   cannot send `DISCONNECT`, and the server then waits 200 ms for each message
+   it sends to it (see Known limitations).
+6. **Stop everything:**
+
+   ```sh
+   pkill -f ft_bin/aquarium; pkill -f ft_bin/fish; pkill -x server
+   ```
+
+The same steps by hand, without `demo.sh`: start `./server` in a first terminal;
+in a second one run `./client <ipc> create fishtank` and then
+`./ft_bin/aquarium ./client <ipc> fishtank viewer`; in a third one run
+`./ft_bin/fish ./client <ipc> fishtank`.
+
+**If something goes wrong**
+
+- `rosetta error` or `Exec format error`: the x86-64 libraries are missing. Run
+  `bash .devcontainer/setup.sh` and try again.
+- `DISPLAY environment variable is missing` or `Failed to open display`: the
+  virtual screen is not running. Run `bash .devcontainer/display.sh`.
+- The browser page does not open: check that port 6080 is listed in the Ports
+  tab of VS Code. Then check that the virtual screen and the web bridge are
+  running:
+
+  ```
+  pgrep -a Xvfb; pgrep -a x11vnc; pgrep -af websockify
+  ```
+
+  Each of the three should print at least one line. (`websockify` may print
+  two lines, because it starts one extra process for each open browser tab.)
+  If a line is missing, run `bash .devcontainer/display.sh`.
+- `demo.sh` prints `Missing ft_bin/aquarium`: step 1 was not done.
+- The logs of the last run are in `/tmp/server.err`, `/tmp/aquarium.out` and
+  `/tmp/fish.out`.
+
 ## Project layout
 
 ```
@@ -532,6 +651,11 @@ make test
 ├── tests/
 │   ├── PrefixIndexTest.cpp
 │   └── HashMapTest.cpp
+├── .devcontainer/
+│   ├── devcontainer.json     dev container (Ubuntu 24.04) and display settings
+│   ├── setup.sh              installs the virtual screen and x86-64 libraries
+│   ├── display.sh            starts the virtual screen and the browser view
+│   └── demo.sh               runs the server, aquarium and fish together
 └── treenity_technical_notes.md   role split and the frozen IPC contract
 ```
 
