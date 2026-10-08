@@ -50,7 +50,8 @@ Key features:
 - `libgtest-dev` and `pkg-config`, only for `make test`.
 
 The `.devcontainer/devcontainer.json` (Ubuntu 24.04) installs all of the
-above if you open the project in a dev container.
+above if you open the project in a dev container. It also prepares what the
+provided `ft_fish` and `ft_aquarium` tools need (see Testing).
 
 ### Build
 
@@ -508,6 +509,205 @@ make test
   found, and erasing one key removes only that key;
 - growth under load: many inserts trigger rehashing and every key stays findable.
 
+### Provided test tools: `ft_fish` and `ft_aquarium`
+
+The subject provides two programs that check the system end to end. In the
+archive they are called `fish` and `aquarium`. They are not part of the project
+and are not committed.
+
+**What they are**
+
+| Word | In the project | In this check |
+| --- | --- | --- |
+| server | `./server`: owns the topics, keeps the messages, delivers them and remembers offsets. | Started by hand in terminal 1. |
+| IPC identifier | The server's queue name `/treenity.server.<pid>`, the first line `./server` prints. | Passed to every command as `$IPC`. |
+| client | `./client`: talks to the server (`create`, `produce`, `subscribe`, `info`). | `fish` and `aquarium` start our `client` and use its input and output. |
+| topic, message | A named log of messages; a message is a key and a value. | Topic `fishtank`; key `fish.goldfish.123.swim`, value a small JSON text. |
+| producer | `client produce <topic> --raw`. | `fish`: one program is one fish. |
+| subscriber | `client subscribe <topic> <name> --raw`. | `aquarium`: the fourth argument is its name. |
+| offset, prefix | Position of a message in the topic; filter on the start of the key (prefix trie). | `aquarium -o` and `-p`. |
+
+```
+fish     client_path ipc_identifier topic [--min-delay ms] [--max-delay ms] [--seed n] [--species name]
+aquarium client_path ipc_identifier topic client_name [-o offset] [-p prefix]
+```
+
+`-o 0` replays the topic from the beginning. Without `-o`, a new name also starts
+at 0 and a returning name continues at its stored offset. `-p` keeps only the
+messages whose key starts with the prefix.
+
+**What each step proves**
+
+| Step | What it proves |
+| --- | --- |
+| `fish` runs | `produce --raw` accepts binary records one after the other. Several fish are several producers writing to one topic without losing messages. |
+| The fish moves in `aquarium` | `subscribe --raw` prints correct binary records, flushed at once, while the topic grows. |
+| Two viewers with different names | Each subscriber has its own offset and gets every message. |
+| `-p fish.goldfish` | The prefix trie sends only the matching messages. |
+| `-o 0`, `-o 5` | A subscriber can start anywhere in the log. |
+| Ctrl+C, then the same name again | The server remembers the offset and continues from it. |
+| Two viewers with the same name | The second one is refused: `duplicate client name`. |
+
+**Extra files in `.devcontainer/` (Apple Silicon only)**
+
+Both programs are x86-64 programs that open a window even for `-h`. On a normal
+x86 Linux machine with a screen you only type the commands below. On an Apple
+Silicon Mac the container is ARM Linux without a screen, so `devcontainer.json`
+runs two scripts by itself. You do not type them.
+
+| File | When | What it does |
+|---|---|---|
+| `.devcontainer/setup.sh` | Once, when the container is created. | Installs the virtual screen, the VNC tools and the x86-64 libraries that Docker's Rosetta needs. |
+| `.devcontainer/display.sh` | After `setup.sh`, and every time the container starts. | Starts the virtual screen `Xvfb` (display `:99`), `x11vnc` (VNC on port 5900) and `websockify` (the browser view on port 6080). |
+
+**Steps**
+
+1. Put the two programs (the Ubuntu 22.04 `jammy` versions) in `ft_bin/` at the
+   project root (ignored by git) and run `chmod +x ft_bin/aquarium ft_bin/fish`.
+2. Open the project with "Reopen in Container". Wait until the installation is
+   finished, which is when this prints nothing, then check the screen:
+
+   ```sh
+   pgrep -a apt-get
+   pgrep -a Xvfb; pgrep -a x11vnc; pgrep -af websockify
+   ```
+
+   The second command must print a line for each of the three (`websockify` may
+   print two). If one is missing, run `bash .devcontainer/display.sh` and check
+   again. It only starts what is missing.
+3. **Text.** Terminal 1 (`+` in the terminal panel opens a new terminal):
+
+   ```sh
+   ./ft_bin/fish -h
+   ./ft_bin/aquarium -h
+   ```
+
+   Two `XGB:` lines about `Xauthority` may appear first. They are harmless.
+4. **Picture.** Use terminals 1, 2 and 3. The `IPC=` line below sets a variable
+   that exists only in the terminal where it is typed, so type it in every new
+   terminal, with the name the server printed (`1337` is an example).
+
+   *Terminal 1: build and start the server.* Leave it open. The first line it
+   prints is the IPC identifier.
+
+   ```sh
+   make
+   ./server
+   ```
+
+   *Terminal 2: create the topic and start the viewer.*
+
+   ```sh
+   IPC=/treenity.server.1337
+   ./client "$IPC" create fishtank
+   ./ft_bin/aquarium ./client "$IPC" fishtank viewer
+   ```
+
+   Open `http://localhost:6080/vnc.html?autoconnect=true&resize=scale` in the
+   browser. The aquarium is empty and this terminal prints one line per message.
+
+   *Terminal 3: add a fish.*
+
+   ```sh
+   IPC=/treenity.server.1337
+   ./ft_bin/fish ./client "$IPC" fishtank
+   ```
+
+   A fish appears in the browser.
+
+   *Terminal 4: look at the viewer.* The offset grows while the fish move.
+
+   ```sh
+   IPC=/treenity.server.1337
+   ./client "$IPC" info viewer
+   ```
+5. **More fish.** Terminal 4 (`&` keeps the terminal free; the program prints a
+   few lines over the prompt, press Enter):
+
+   ```sh
+   ./ft_bin/fish ./client "$IPC" fishtank &
+   ./ft_bin/fish ./client "$IPC" fishtank --species goldfish &
+   ./ft_bin/fish ./client "$IPC" fishtank --min-delay 100 --max-delay 300 &
+   ./ft_bin/fish ./client "$IPC" fishtank --seed 42 &
+   ```
+
+   The first adds a random fish, the second chooses the species, the third makes
+   it move faster (milliseconds between moves), the fourth repeats the same random
+   movement. Species: `anchovy`, `angelfish`, `arowana`, `bass`, `bluegill`,
+   `bluegroper`, `carp`, `catfish`, `clownfish`, `flounder`, `goby`, `goldfish`,
+   `guppy`, `napoleonwrasse`, `neontetra`, `pufferfish`, `purpletang`,
+   `rainbowtrout`, `ribboneel`, `salmon`, `seahorse`, `silverjawminnow`,
+   `surgeonfish`, `tuna`, `yellowperch`.
+6. **More viewers.** Terminal 5. Each viewer needs its own name and runs in the
+   foreground; stop it with Ctrl+C and the terminal is free for the next one. A
+   new viewer covers the older ones, so only one with `-p` looks different.
+
+   ```sh
+   IPC=/treenity.server.1337
+   ```
+
+   Only the goldfish, with the whole history first. Ctrl+C when done:
+
+   ```sh
+   ./ft_bin/aquarium ./client "$IPC" fishtank viewer2 -o 0 -p fish.goldfish
+   ```
+
+   Start at message 5. Ctrl+C when done:
+
+   ```sh
+   ./ft_bin/aquarium ./client "$IPC" fishtank viewer3 -o 5
+   ```
+
+   A name that is already used is refused (`duplicate client name`) and leaves an
+   empty window on top. Ctrl+C closes it and the fish are back:
+
+   ```sh
+   ./ft_bin/aquarium ./client "$IPC" fishtank viewer
+   ```
+
+   Continue after a stop. Start it, run `./client "$IPC" info viewer4` in
+   terminal 4 and note the offset, stop it with Ctrl+C in terminal 5, start it again
+   with the same command and look at the offset again: it is larger, not 0:
+
+   ```sh
+   ./ft_bin/aquarium ./client "$IPC" fishtank viewer4
+   ```
+7. **Data as text.** Terminal 5. Every event as `key:value`, from the start.
+   Ctrl+C stops it. Do not pipe it into `head`:
+
+   ```sh
+   ./client "$IPC" subscribe fishtank watch --offset 0
+   ```
+8. **Stop.** In this order. Do not kill a viewer: the server would still think it
+   is connected (`duplicate client name` for that name, and 200 ms lost on every
+   message it sends to it).
+
+   *Terminals 2 and 5:* Ctrl+C in each viewer. *Terminal 4:*
+
+   ```sh
+   pkill -f ft_bin/fish
+   ```
+
+   *Terminal 1:* Ctrl+C. A clean stop ends with
+   `server: shutting down ... waiting for 0 consumer(s) to commit`. Lines like
+   `server: client 'viewer' unreachable (No such file or directory)` before it are
+   harmless: the client had already left. Starting `./server` again gives a clean
+   server (create the topic again).
+
+**If something goes wrong**
+
+- `rosetta error` or `Exec format error`: run `bash .devcontainer/setup.sh`.
+- `DISPLAY environment variable is missing` or `Failed to open display`: run
+  `bash .devcontainer/display.sh`.
+- The browser page stays on "Connecting..." or is black: run the `pgrep` line of
+  step 2 and `bash .devcontainer/display.sh` if a line is missing, then reload
+  with Ctrl+Shift+R. If all three run and the page is black, no viewer is
+  running (`pgrep -a aquarium`). If the page does not open at all, check port 6080
+  in the Ports tab of VS Code.
+- `duplicate client name`: a viewer with this name is still registered, which
+  happens after it was killed (see Known limitations). Use another name, or stop
+  `./server` with Ctrl+C, start it again and create the topic again.
+
 ## Project layout
 
 ```
@@ -532,6 +732,10 @@ make test
 ├── tests/
 │   ├── PrefixIndexTest.cpp
 │   └── HashMapTest.cpp
+├── .devcontainer/
+│   ├── devcontainer.json     dev container (Ubuntu 24.04) and display settings
+│   ├── setup.sh              installs the virtual screen and x86-64 libraries
+│   └── display.sh            starts the virtual screen and the browser view
 └── treenity_technical_notes.md   role split and the frozen IPC contract
 ```
 

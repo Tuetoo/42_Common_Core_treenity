@@ -9,3 +9,5 @@ obj/
 treenity.pdf
 git_guidelines.pdf
 gitinette
+ft_bin/
+.DS_Store
