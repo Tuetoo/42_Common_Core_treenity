@@ -143,3 +143,30 @@ TEST(PrefixIndex, EmptyKeyOnlyMatchesEmptyOrWildcardPrefixes) {
     ASSERT_EQ(result.size(), 1u);
     EXPECT_EQ(result[0].client_id, "exact-empty");
 }
+
+TEST(PrefixIndex, LargeScaleConfigurationStaysCorrect) {
+    PrefixIndex index;
+    constexpr int kConsumers = 2000;
+    constexpr int kBuckets = 50;
+    for (int i = 0; i < kConsumers; ++i) {
+        std::string prefix = "topic" + std::to_string(i % kBuckets) + ".";
+        index.add(make_consumer("c" + std::to_string(i), prefix));
+    }
+    ASSERT_EQ(index.all().size(), static_cast<std::size_t>(kConsumers));
+
+    // Every one of the 40 consumers sharing "topic7." matches, none from
+    // the other 49 buckets leak in.
+    auto result = index.match("topic7.event");
+    EXPECT_EQ(result.size(), static_cast<std::size_t>(kConsumers / kBuckets));
+    for (const auto& c : result)
+        EXPECT_EQ(c.prefix, "topic7.");
+
+    EXPECT_TRUE(index.match("unrelated.key").empty());
+
+    // Removing one member out of thousands only drops that one, at scale.
+    index.remove("c7");
+    auto after_removal = index.match("topic7.event");
+    EXPECT_EQ(after_removal.size(), static_cast<std::size_t>(kConsumers / kBuckets) - 1);
+    EXPECT_FALSE(contains(after_removal, "c7"));
+    EXPECT_EQ(index.all().size(), static_cast<std::size_t>(kConsumers - 1));
+}
