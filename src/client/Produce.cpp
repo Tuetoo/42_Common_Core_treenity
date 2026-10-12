@@ -87,8 +87,7 @@ int run_produce(const std::string& ipc_path, const std::string& topic_name, bool
     if (!client.connect())
         return fail("could not reach server at '" + ipc_path + "'", 1);
 
-    IpcRequest req{};
-    req.type = MessageType::PRODUCE_START;
+    IpcRequest req = make_request(MessageType::PRODUCE_START);
     std::strncpy(req.topic_name, topic_name.c_str(), MAX_ID_LEN);
 
     IpcResponse resp;

@@ -33,8 +33,7 @@ int run_info(const std::string& ipc_path, const std::string& target_client_id) {
     if (!client.connect())
         return fail("could not reach server at '" + ipc_path + "'", 1);
 
-    IpcRequest req{};
-    req.type = MessageType::INFO;
+    IpcRequest req = make_request(MessageType::INFO);
     std::strncpy(req.query_client_id, target_client_id.c_str(), MAX_ID_LEN);
 
     IpcResponse resp;

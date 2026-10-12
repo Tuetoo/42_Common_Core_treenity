@@ -18,8 +18,7 @@ int run_create(const std::string& ipc_path, const std::string& topic_name) {
     if (!client.connect())
         return fail("could not reach server at '" + ipc_path + "'", 1);
 
-    IpcRequest req{};
-    req.type = MessageType::CREATE_TOPIC;
+    IpcRequest req = make_request(MessageType::CREATE_TOPIC);
     std::strncpy(req.topic_name, topic_name.c_str(), MAX_ID_LEN);
 
     IpcResponse resp;

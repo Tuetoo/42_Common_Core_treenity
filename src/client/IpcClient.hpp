@@ -4,12 +4,38 @@
 #include "ipc_protocol.h"
 
 #include <cstdint>
+#include <cstring>
 #include <mqueue.h>
 #include <string>
 
 namespace treenity::client {
 
 enum class RecvResult { OK, INTERRUPTED, ERROR };
+
+// IpcRequest has alignment padding between `type` (1 byte) and `request_id`
+// (8-byte aligned) that aggregate init (`IpcRequest{}`) does not reliably
+// zero. Those bytes still get copied into the mq_send() buffer, which
+// valgrind correctly flags as sending uninitialised memory through a
+// syscall. Always build a request through this helper instead of
+// `IpcRequest req{};` so the whole struct, padding included, is zeroed
+// before any field is set.
+inline IpcRequest make_request(MessageType type) {
+    // IpcRequest only has scalar/char-array members and no virtual/base
+    // classes, so memset-zeroing it (padding included) is safe; GCC's
+    // -Wclass-memaccess is a blanket warning for any type with in-class
+    // member initializers and doesn't special-case this.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
+#endif
+    IpcRequest req;
+    std::memset(&req, 0, sizeof(req));
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+    req.type = type;
+    return req;
+}
 
 // Owns one client's side of the protocol: this process's dedicated reply
 // queue, and the write end of the server's main queue. One instance per
