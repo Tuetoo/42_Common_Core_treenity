@@ -76,8 +76,7 @@ int run_subscribe(const std::string& ipc_path, const std::string& topic_name,
 
     install_signal_handlers();
 
-    IpcRequest req{};
-    req.type = MessageType::REGISTER_CLIENT;
+    IpcRequest req = make_request(MessageType::REGISTER_CLIENT);
     std::strncpy(req.topic_name, topic_name.c_str(), MAX_ID_LEN);
     if (has_prefix)
         std::strncpy(req.prefix, prefix.c_str(), MAX_PREFIX_LEN);
@@ -119,15 +118,13 @@ int run_subscribe(const std::string& ipc_path, const std::string& topic_name,
         else
             print_text(msg.consumer_msg);
 
-        IpcRequest ack{};
-        ack.type = MessageType::CONSUMER_ACK;
+        IpcRequest ack = make_request(MessageType::CONSUMER_ACK);
         ack.ack_offset = msg.consumer_msg.offset + 1;
         client.send_request(ack);
     }
 
     if (exit_code == 0) {
-        IpcRequest disconnect{};
-        disconnect.type = MessageType::DISCONNECT;
+        IpcRequest disconnect = make_request(MessageType::DISCONNECT);
         client.send_request(disconnect); // best-effort, do not wait for the reply
     }
     client.cleanup();

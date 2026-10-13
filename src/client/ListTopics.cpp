@@ -14,8 +14,7 @@ int run_list(const std::string& ipc_path) {
     if (!client.connect())
         return fail("could not reach server at '" + ipc_path + "'", 1);
 
-    IpcRequest req{};
-    req.type = MessageType::LIST_TOPICS;
+    IpcRequest req = make_request(MessageType::LIST_TOPICS);
 
     IpcResponse resp;
     bool ok = client.request(req, resp);
